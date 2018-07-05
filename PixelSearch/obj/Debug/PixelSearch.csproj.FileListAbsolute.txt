@@ -3,4 +3,3 @@ C:\Users\Theo\source\repos\PixelSearch\PixelSearch\obj\Debug\PixelSearch.csproj.
 C:\Users\Theo\source\repos\PixelSearch\PixelSearch\obj\Debug\PixelSearch.csproj.CoreCompileInputs.cache
 C:\Users\Theo\source\repos\PixelSearch\PixelSearch\obj\Debug\PixelSearch.pdb
 C:\Users\Theo\source\repos\PixelSearch\PixelSearch\obj\Debug\PixelSearch.dll
-C:\Users\Theo\source\repos\PixelSearch\PixelSearch\obj\Debug\PixelSearch.csprojResolveAssemblyReference.cache

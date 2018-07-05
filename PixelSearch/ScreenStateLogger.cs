@@ -534,7 +534,99 @@ public class PixelLibrary
 
 		return pointsList;
 	}
+	public List<Point> FindImageInImage(int parrentLeft, int parrentTop, int parrentRight, int parrentBottom, Bitmap searchingBitmap)
+	{
+		Bitmap bmpScreenshot = new Bitmap(Screen.PrimaryScreen.Bounds.Width, Screen.PrimaryScreen.Bounds.Height);
+		Graphics g = Graphics.FromImage(bmpScreenshot);
+		g.CopyFromScreen(parrentLeft, parrentTop, parrentRight, parrentBottom, Screen.PrimaryScreen.Bounds.Size);
 
+		var pixelFormatSize = Image.GetPixelFormatSize(bmpScreenshot.PixelFormat) / 8;
+
+		// Copy sourceBitmap to byte array
+		var sourceBitmapData = bmpScreenshot.LockBits(new Rectangle(0, 0, bmpScreenshot.Width, bmpScreenshot.Height),
+			ImageLockMode.ReadOnly, bmpScreenshot.PixelFormat);
+		var sourceBitmapBytesLength = sourceBitmapData.Stride * bmpScreenshot.Height;
+		var sourceBytes = new byte[sourceBitmapBytesLength];
+		Marshal.Copy(sourceBitmapData.Scan0, sourceBytes, 0, sourceBitmapBytesLength);
+		bmpScreenshot.UnlockBits(sourceBitmapData);
+
+		// Copy serchingBitmap to byte array
+		var serchingBitmapData =
+			searchingBitmap.LockBits(new Rectangle(0, 0, searchingBitmap.Width, searchingBitmap.Height),
+				ImageLockMode.ReadOnly, searchingBitmap.PixelFormat);
+		var serchingBitmapBytesLength = serchingBitmapData.Stride * searchingBitmap.Height;
+		var serchingBytes = new byte[serchingBitmapBytesLength];
+		Marshal.Copy(serchingBitmapData.Scan0, serchingBytes, 0, serchingBitmapBytesLength);
+		searchingBitmap.UnlockBits(serchingBitmapData);
+
+		var pointsList = new List<Point>();
+
+		// Serching entries
+		// minimazing serching zone
+		// sourceBitmap.Height - serchingBitmap.Height + 1
+		for (var mainY = 0; mainY < bmpScreenshot.Height - searchingBitmap.Height + 1; mainY++)
+		{
+			var sourceY = mainY * sourceBitmapData.Stride;
+
+			for (var mainX = 0; mainX < bmpScreenshot.Width - searchingBitmap.Width + 1; mainX++)
+			{// mainY & mainX - pixel coordinates of sourceBitmap
+			 // sourceY + sourceX = pointer in array sourceBitmap bytes
+				var sourceX = mainX * pixelFormatSize;
+
+				var isEqual = true;
+				for (var c = 0; c < pixelFormatSize; c++)
+				{// through the bytes in pixel
+					if (sourceBytes[sourceX + sourceY + c] == serchingBytes[c])
+						continue;
+					isEqual = false;
+					break;
+				}
+
+				if (!isEqual) continue;
+
+				var isStop = false;
+
+				// find fist equalation and now we go deeper) 
+				for (var secY = 0; secY < searchingBitmap.Height; secY++)
+				{
+					var serchY = secY * serchingBitmapData.Stride;
+
+					var sourceSecY = (mainY + secY) * sourceBitmapData.Stride;
+
+					for (var secX = 0; secX < searchingBitmap.Width; secX++)
+					{// secX & secY - coordinates of serchingBitmap
+					 // serchX + serchY = pointer in array serchingBitmap bytes
+
+						var serchX = secX * pixelFormatSize;
+
+						var sourceSecX = (mainX + secX) * pixelFormatSize;
+
+						for (var c = 0; c < pixelFormatSize; c++)
+						{// through the bytes in pixel
+							if (sourceBytes[sourceSecX + sourceSecY + c] == serchingBytes[serchX + serchY + c]) continue;
+
+							// not equal - abort iteration
+							isStop = true;
+							break;
+						}
+
+						if (isStop) break;
+					}
+
+					if (isStop) break;
+				}
+
+				if (!isStop)
+				{// serching bitmap is founded!!
+					pointsList.Add(new Point(mainX, mainY));
+				}
+			}
+		}
+
+		bmpScreenshot.Dispose();
+		g.Dispose();
+		return pointsList;
+	}
 	#endregion
 
 	public void Stop()
@@ -550,6 +642,7 @@ public class PixelLibrary
 			MouseManipulator.MouseClickLeft();
 		}
 	}
+
 	public EventHandler<byte[]> ScreenRefreshed;
 	public EventHandler<Point> PixelFound;
 }
