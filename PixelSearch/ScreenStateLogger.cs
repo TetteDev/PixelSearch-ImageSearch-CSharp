@@ -235,12 +235,6 @@ public class PixelLibrary
 	#region PixelSearch Related Functions
 	public Point PixelSearch(BitmapData bmpData, int step = 1, int variance = 2, bool debugInfo = false)
 	{
-		MessageBox.Show(
-			"This is a work in progress, please do not use this. Use the single threaded version until this is fixed!",
-			"Please read!", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-
-		return new Point(-1, -1);
-
 		if (bmpData != null)
 		{
 			int refX = x;
@@ -315,6 +309,12 @@ public class PixelLibrary
 	}
 	public Point PixelSearchThreaded(BitmapData bmpData, int threadCount = 8)
 	{
+		MessageBox.Show(
+			"This is a work in progress, please do not use this. Use the single threaded version until this is fixed!",
+			"Please read!", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+
+		return new Point(-1, -1);
+
 		if (threadCount > Environment.ProcessorCount) threadCount = Environment.ProcessorCount;
 		if (threadCount < 1 || threadCount == 1) return PixelSearch(bmpData);
 
