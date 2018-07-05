@@ -8,5 +8,7 @@ Current Features:
 
 Currently working on a threaded version of the pixel searcher.
 
+A precompiled .dll is available under Releases.
+
 See repository "Pixel Searcher Libray Example" for how to use it
 ![alt text](https://i.imgur.com/JBVzfdU.png)
