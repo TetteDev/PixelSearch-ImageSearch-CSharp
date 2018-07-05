@@ -25,18 +25,45 @@ namespace PixelSearch
 		private const int MOUSEEVENTF_RIGHTUP = 0x10;
 
 
-		public static void MouseClickLeft()
+		public static void MouseClickLeft(int clickCount = 0)
 		{
-			uint X = (uint)Cursor.Position.X;
-			uint Y = (uint)Cursor.Position.Y;
-			mouse_event(MOUSEEVENTF_LEFTDOWN | MOUSEEVENTF_LEFTUP, X, Y, 0, 0);
+			if (clickCount == 1 || clickCount == 0)
+			{
+				uint X = (uint) Cursor.Position.X;
+				uint Y = (uint) Cursor.Position.Y;
+				mouse_event(MOUSEEVENTF_LEFTDOWN | MOUSEEVENTF_LEFTUP, X, Y, 0, 0);
+			}
+			else
+			{
+				for (int i = 0; i < clickCount; i++)
+				{
+					uint X = (uint)Cursor.Position.X;
+					uint Y = (uint)Cursor.Position.Y;
+					mouse_event(MOUSEEVENTF_LEFTDOWN | MOUSEEVENTF_LEFTUP, X, Y, 0, 0);
+				}
+			}
+			
 		}
 
-		public static void MouseClickRight()
+		public static void MouseClickRight(int clickCount = 0)
 		{
-			uint X = (uint)Cursor.Position.X;
-			uint Y = (uint)Cursor.Position.Y;
-			mouse_event(MOUSEEVENTF_RIGHTDOWN | MOUSEEVENTF_RIGHTUP, X, Y, 0, 0);
+			if (clickCount == 1 || clickCount == 0)
+			{
+				uint X = (uint) Cursor.Position.X;
+				uint Y = (uint) Cursor.Position.Y;
+				mouse_event(MOUSEEVENTF_RIGHTDOWN | MOUSEEVENTF_RIGHTUP, X, Y, 0, 0);
+			}
+			else
+			{
+				for (int i = 0; i < clickCount; i++)
+				{
+					uint X = (uint)Cursor.Position.X;
+					uint Y = (uint)Cursor.Position.Y;
+					mouse_event(MOUSEEVENTF_RIGHTDOWN | MOUSEEVENTF_RIGHTUP, X, Y, 0, 0);
+				}
+
+			}
+			
 		}
 
 		public static void MouseMove(int x, int y)
