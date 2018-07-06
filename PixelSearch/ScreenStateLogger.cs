@@ -1,4 +1,5 @@
 ﻿using System;
+using System.CodeDom;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -27,6 +28,7 @@ public class PixelLibrary
 	public Color colorCustom;
 	public int step = 0;
 	public int maxvariance = 0;
+	public int maxThreads = 0;
 
 	public bool isPixelSearcherActivated = false;
 	public bool printTimeTaken = false;
@@ -37,7 +39,7 @@ public class PixelLibrary
 		printTimeTaken = printDebugInfo;
 	}
 
-	public PixelLibrary(int x, int y, Color color, int width = 2560, int height = 1440, int step = 1, int maxvariance = 0)
+	public PixelLibrary(int x, int y, Color color, int width = 2560, int height = 1440, int step = 1, int maxvariance = 0, int threadCount = 1)
 	{
 		this.x = x;
 		this.y = y;
@@ -46,6 +48,7 @@ public class PixelLibrary
 		this.colorCustom = color;
 		this.step = step;
 		this.maxvariance = maxvariance;
+		this.maxThreads = threadCount;
 	}
 
 	public void Start()
@@ -144,7 +147,7 @@ public class PixelLibrary
 
 							if (isPixelSearcherActivated)
 							{
-								Point p = PixelSearch(mapDest, 1, 0, printTimeTaken);
+								Point p = PixelSearchThreaded(mapDest, step, maxvariance, printTimeTaken, maxThreads);
 								if (p.X != -1 && p.Y != -1)
 								{
 									PixelFound?.Invoke(this, p);
@@ -233,7 +236,7 @@ public class PixelLibrary
 	#endregion
 
 	#region PixelSearch Related Functions
-	public Point PixelSearch(BitmapData bmpData, int step = 1, int variance = 2, bool debugInfo = false)
+	public Point PixelSearch(BitmapData bmpData, int step = 1, int variance = 0, bool debugInfo = false)
 	{
 		if (bmpData != null)
 		{
@@ -301,117 +304,210 @@ public class PixelLibrary
 		// 'bmpData' is null
 		return new Point(-1, -1);
 	}
-	public class ImageData
-	{
-		public IntPtr MemoryStart;
-		public int ItemIndex;
-		public byte[] Buffer;
-	}
-	public Point PixelSearchThreaded(BitmapData bmpData, int threadCount = 8)
-	{
-		MessageBox.Show(
-			"This is a work in progress, please do not use this. Use the single threaded version until this is fixed!",
-			"Please read!", MessageBoxButtons.OK, MessageBoxIcon.Warning);
 
-		return new Point(-1, -1);
-
+	public Point PixelSearchThreaded(BitmapData bmpData, int step = 1, int variance = 0, bool debugInfo = false, int threadCount = 8)
+	{
 		if (threadCount > Environment.ProcessorCount) threadCount = Environment.ProcessorCount;
+	
+		// if a thread count thats either 0 or 1 is set, just set it to use the single threaded version
 		if (threadCount < 1 || threadCount == 1) return PixelSearch(bmpData);
 
 		if (bmpData != null)
 		{
-			int refX = x;
-			int refY = y;
-
 			unsafe
 			{
+				int refX = x;
+				int refY = y;
+
 				int bytesPerPixel = Image.GetPixelFormatSize(bmpData.PixelFormat) / 8;
 				int heightInPixels = bmpData.Height;
 				int widthInBytes = bmpData.Width * bytesPerPixel;
-				byte* ptrFirstPixel = (byte*)bmpData.Scan0;
+				byte* ptrFirstPixel = (byte*) bmpData.Scan0;
 
-				int workPerThread = (widthInBytes * heightInPixels) / threadCount;
-
-				if (workPerThread * threadCount != (widthInBytes * heightInPixels) ||
-					(widthInBytes * heightInPixels) % threadCount != 0)
-				{
-					// work is not evenly distributed
-					// resolve this by assigning the left over remaining bytes to the last byte buffer
-					Debug.WriteLine("[WARN] Work not evenly distributed between threads!");
-				}
-
-				List<ImageData> buffers = new List<ImageData>();
-				IntPtr pointerCurrentLocation = new IntPtr(ptrFirstPixel);
-				int cyclesDone = 0;
-
-				for (int i = 0; i < (widthInBytes * heightInPixels); i += workPerThread)
-				{
-					ImageData newItem = new ImageData();
-					byte[] threadBuffer = new byte[workPerThread];
-					Marshal.Copy(pointerCurrentLocation, threadBuffer, 0, workPerThread);
-
-					newItem.Buffer = threadBuffer;
-					newItem.MemoryStart = pointerCurrentLocation;
-					newItem.ItemIndex = (cyclesDone + 1);
-
-					buffers.Add(newItem);
-
-					cyclesDone++;
-					pointerCurrentLocation += workPerThread;
-				}
+				var options = new ParallelOptions();
+				options.MaxDegreeOfParallelism = Environment.ProcessorCount;
 
 				ConcurrentBag<Point> results = new ConcurrentBag<Point>();
 
-				Parallel.ForEach(buffers,
-					new ParallelOptions { MaxDegreeOfParallelism = threadCount },
-					(currentBuffer, state) =>
+				Parallel.For(0, heightInPixels, options, (y, state) => 
+				{
+					if (results.Count > 0) state.Stop();
+
+					byte* currentLine = ptrFirstPixel + (y * bmpData.Stride);
+
+					for (int x = 0; x < widthInBytes; x = x + (bytesPerPixel * step))
 					{
+						if (results.Count > 0) state.Stop();
 
-						for (int y = 0; y < (heightInPixels / threadCount); y++)
+						int currentBlue = currentLine[x];
+						int currentGreen = currentLine[x + 1];
+						int currentRed = currentLine[x + 2];
+						int currentAlpha = currentLine[x + 3];
+
+						if (colorCustom.R == currentRed && colorCustom.G == currentGreen && colorCustom.B == currentBlue) // Not checking if matching alpha
 						{
-							byte* currentLine = (byte*)(currentBuffer.MemoryStart + (y * bmpData.Stride));
+							int translatedX = (x / bytesPerPixel);
+							int translatedY = y;
 
-							for (int x = 0; x < widthInBytes; x = x + bytesPerPixel)
+							results.Add(new Point(translatedX, translatedY));
+							state.Stop();
+						}
+
+						if (variance > 0)
+						{
+							if (ColorsAreClose(Color.FromArgb(currentRed, currentGreen, currentBlue), colorCustom, variance))
 							{
-								int currentBlue = currentLine[x];
-								int currentGreen = currentLine[x + 1];
-								int currentRed = currentLine[x + 2];
-								int currentAlpha = currentLine[x + 3];
+								int translatedX = (x / bytesPerPixel);
+								int translatedY = y;
 
-								if (colorCustom.R == currentRed && colorCustom.G == currentGreen && colorCustom.B == currentBlue) // Not checking if matching alpha
-								{
-									int translatedX = refX + (currentBuffer.ItemIndex * (x / bytesPerPixel));
-									int translatedY = refY + (currentBuffer.ItemIndex * y);
-
-
-									Cursor.Position = new Point(translatedX, translatedY);
-
-									/*
-									translatedX = refX + (currentBuffer.ItemIndex - 1 * (x));
-									translatedY = refY + (currentBuffer.ItemIndex - 1 * y);
-									*/
-
-									results.Add(new Point(translatedX, translatedY));
-									state.Break();
-								}
+								// Print time taken, will be removed from the code when 
+								results.Add(new Point(translatedX, translatedY));
+								state.Stop();
 							}
 						}
 
-					});
+					}
+				});
 
 
 				if (results.Count > 0)
 				{
-					Point firstItem = new Point();
-					results.TryPeek(out firstItem);
-
-					return firstItem;
+					Point result;
+					if (results.TryPeek(out result))
+					{
+						return result;
+					}
 				}
 			}
 		}
 
 		// 'bmpData' is null
 		return new Point(-1, -1);
+	}
+
+	public List<T[,]> Split2DArrayIntoChunks<T>(T[,] bigArray, int chunkCount = 2)
+	{
+		// for use on colum major 2d arrays
+
+		if (bigArray.Length < 1) return new List<T[,]>();
+
+		List<T[,]> chunkContainer = new List<T[,]>();
+		int atCurrentHeight = 0;
+		int heightPerChunk = bigArray.GetLength(0) / chunkCount;
+
+		for (int threadBlock = 0; threadBlock < chunkCount; threadBlock++)
+		{
+			if (threadBlock == chunkCount - 1) // we're at the last chunk
+			{
+				int remainingLines = (bigArray.GetLength(0) - atCurrentHeight);
+				Debug.WriteLine("At last chunk, we have " + remainingLines + " lines left to assign the last block!");
+				T[,] newThreadBlock = new T[remainingLines, bigArray.GetLength(1)];
+
+				for (int i = 0; i < remainingLines; i++)
+				{
+					for (int j = 0; j < bigArray.GetLength(1); j++)
+					{
+						newThreadBlock[i, j] = bigArray[atCurrentHeight + i, j];
+					}
+				}
+
+				atCurrentHeight += remainingLines;
+				chunkContainer.Add(newThreadBlock);
+			}
+			else
+			{
+				T[,] newThreadBlock = new T[heightPerChunk, bigArray.GetLength(1)];
+
+				for (int i = 0; i < heightPerChunk; i++)
+				{
+					for (int j = 0; j < bigArray.GetLength(1); j++)
+					{
+						newThreadBlock[i, j] = bigArray[atCurrentHeight + i, j];
+					}
+				}
+
+				atCurrentHeight += heightPerChunk;
+				chunkContainer.Add(newThreadBlock);
+			}
+		}
+
+		Debug.WriteLine("Blocks Available: " + chunkContainer.Count);
+		Debug.WriteLine("Height Itterated Through: " + atCurrentHeight);
+		Debug.WriteLine("Height Remaining: " + (bigArray.GetLength(0) - atCurrentHeight)); // if bigger than 0 something went wrong
+
+		return chunkContainer;
+	}
+
+	public class Chunk
+	{
+		public byte[,] Chunk2D;
+		public int RefIndex;
+	}
+
+	public List<Chunk> Chunkify2DArray(byte[,] bigArray, int chunkCount = 2)
+	{
+		if (bigArray.Length < 1) return new List<Chunk>();
+
+		List<Chunk> chunkContainer = new List<Chunk>();
+		int atCurrentHeight = 0;
+		int heightPerChunk = bigArray.GetLength(0) / chunkCount;
+
+		for (int threadBlock = 0; threadBlock < chunkCount; threadBlock++)
+		{
+			if (threadBlock == chunkCount - 1) // we're at the last chunk
+			{
+				Chunk newChunk = new Chunk();
+				int remainingLines = (bigArray.GetLength(0) - atCurrentHeight);
+				Debug.WriteLine("At last chunk, we have " + remainingLines + " lines left to assign the last block!");
+				byte[,] newThreadBlock = new byte[remainingLines, bigArray.GetLength(1)];
+
+				for (int i = 0; i < remainingLines; i++)
+				{
+					for (int j = 0; j < bigArray.GetLength(1); j++)
+					{
+						newThreadBlock[i, j] = bigArray[atCurrentHeight + i, j];
+					}
+				}
+
+				newChunk.Chunk2D = newThreadBlock;
+				newChunk.RefIndex = threadBlock;
+
+				atCurrentHeight += remainingLines;
+				chunkContainer.Add(newChunk);
+			}
+			else
+			{
+				byte[,] newThreadBlock = new byte[heightPerChunk, bigArray.GetLength(1)];
+				Chunk newChunk = new Chunk();
+
+				for (int i = 0; i < heightPerChunk; i++)
+				{
+					for (int j = 0; j < bigArray.GetLength(1); j++)
+					{
+						newThreadBlock[i, j] = bigArray[atCurrentHeight + i, j];
+					}
+				}
+
+				newChunk.Chunk2D = newThreadBlock;
+				newChunk.RefIndex = threadBlock;
+				atCurrentHeight += heightPerChunk;
+				chunkContainer.Add(newChunk);
+			}
+		}
+		return chunkContainer;
+	}
+
+	private static byte[,] ConvertBufferTo2DArray(byte[] input, int height, int width)
+	{
+		byte[,] output = new byte[height, width];
+		for (int i = 0; i < height; i++)
+		{
+			for (int j = 0; j < width; j++)
+			{
+				output[i, j] = input[i * width + j];
+			}
+		}
+		return output;
 	}
 	#endregion
 
