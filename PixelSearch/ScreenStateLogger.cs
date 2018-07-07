@@ -1,5 +1,4 @@
 ﻿using System;
-using System.CodeDom;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -13,25 +12,28 @@ using PixelSearch;
 using SharpDX;
 using SharpDX.Direct3D11;
 using SharpDX.DXGI;
+using Device = SharpDX.Direct3D11.Device;
+using MapFlags = SharpDX.Direct3D11.MapFlags;
+using Resource = SharpDX.DXGI.Resource;
+using ResultCode = SharpDX.DXGI.ResultCode;
 
 public class PixelLibrary
 {
-	private byte[] _previousScreen;
 	private bool _run, _init;
 
 	public int Size { get; private set; }
 
-	public int x = 0;
-	public int y = 0;
-	public int widthCustom = 0;
-	public int heightCustom = 0;
+	public int x;
+	public int y;
+	public int widthCustom;
+	public int heightCustom;
 	public Color colorCustom;
-	public int step = 0;
-	public int maxvariance = 0;
-	public int maxThreads = 0;
+	public int step;
+	public int maxvariance;
+	public int maxThreads;
 
-	public bool isPixelSearcherActivated = false;
-	public bool printTimeTaken = false;
+	public bool isPixelSearcherActivated;
+	public bool printTimeTaken;
 
 	public void TogglePixelSearcher(bool toggle, bool printDebugInfo = false)
 	{
@@ -43,12 +45,12 @@ public class PixelLibrary
 	{
 		this.x = x;
 		this.y = y;
-		this.widthCustom = width;
-		this.heightCustom = height;
-		this.colorCustom = color;
+		widthCustom = width;
+		heightCustom = height;
+		colorCustom = color;
 		this.step = step;
 		this.maxvariance = maxvariance;
-		this.maxThreads = threadCount;
+		maxThreads = threadCount;
 	}
 
 	public void Start()
@@ -58,14 +60,14 @@ public class PixelLibrary
 		//Get first adapter
 		var adapter = factory.GetAdapter1(0);
 		//Get device from adapter
-		var device = new SharpDX.Direct3D11.Device(adapter);
+		var device = new Device(adapter);
 		//Get front buffer of the adapter
 		var output = adapter.GetOutput(0);
 		var output1 = output.QueryInterface<Output1>();
 
 		// Width/Height of desktop to capture
-		int width = 0;
-		int height = 0;
+		var width = 0;
+		var height = 0;
 
 		if (widthCustom > output.Description.DesktopBounds.Right || widthCustom < 1)
 		{
@@ -99,7 +101,7 @@ public class PixelLibrary
 			OptionFlags = ResourceOptionFlags.None,
 			MipLevels = 1,
 			ArraySize = 1,
-			SampleDescription = { Count = 1, Quality = 0 },
+			SampleDescription = {Count = 1, Quality = 0},
 			Usage = ResourceUsage.Staging
 		};
 		var screenTexture = new Texture2D(device, textureDesc);
@@ -110,32 +112,30 @@ public class PixelLibrary
 			using (var duplicatedOutput = output1.DuplicateOutput(device))
 			{
 				while (_run)
-				{
 					try
 					{
-						SharpDX.DXGI.Resource screenResource;
-						OutputDuplicateFrameInformation duplicateFrameInformation;
-
 						// Try to get duplicated frame within given time is ms
-						duplicatedOutput.AcquireNextFrame(5, out duplicateFrameInformation, out screenResource);
+						duplicatedOutput.AcquireNextFrame(5, out OutputDuplicateFrameInformation duplicateFrameInformation, out Resource screenResource);
 
 						// copy resource into memory that can be accessed by the CPU
 						using (var screenTexture2D = screenResource.QueryInterface<Texture2D>())
+						{
 							device.ImmediateContext.CopyResource(screenTexture2D, screenTexture);
+						}
 
 						// Get the desktop capture texture
-						var mapSource = device.ImmediateContext.MapSubresource(screenTexture, 0, MapMode.Read, SharpDX.Direct3D11.MapFlags.None);
+						var mapSource = device.ImmediateContext.MapSubresource(screenTexture, 0, MapMode.Read, MapFlags.None);
 
 						// Create Drawing.Bitmap
 						using (var bitmap = new Bitmap(widthCustom, heightCustom, PixelFormat.Format32bppArgb))
 						{
-							var boundsRect = new Rectangle(0,0, widthCustom, heightCustom);
+							var boundsRect = new Rectangle(0, 0, widthCustom, heightCustom);
 
 							// Copy pixels from screen capture Texture to GDI bitmap
 							var mapDest = bitmap.LockBits(boundsRect, ImageLockMode.ReadWrite, bitmap.PixelFormat);
 							var sourcePtr = mapSource.DataPointer;
 							var destPtr = mapDest.Scan0;
-							for (int y = 0; y < heightCustom; y++)
+							for (var y = 0; y < heightCustom; y++)
 							{
 								// Copy a single line 
 								Utilities.CopyMemory(destPtr, sourcePtr, widthCustom * 4);
@@ -147,241 +147,203 @@ public class PixelLibrary
 
 							if (isPixelSearcherActivated)
 							{
-								Point p = PixelSearchThreaded(mapDest, step, maxvariance, printTimeTaken, maxThreads);
+								var p = PixelSearchThreaded(mapDest, step, maxvariance, printTimeTaken, maxThreads);
 								if (p.X != -1 && p.Y != -1)
-								{
 									PixelFound?.Invoke(this, p);
-								}
 							}
-							
+
 							// Release source and dest locks
 							bitmap.UnlockBits(mapDest);
 							device.ImmediateContext.UnmapSubresource(screenTexture, 0);
-							
+
 							using (var ms = new MemoryStream())
 							{
 								bitmap.Save(ms, ImageFormat.Bmp);
 								ScreenRefreshed?.Invoke(this, ms.ToArray());
 								_init = true;
 							}
-							
 						}
 						screenResource.Dispose();
 						duplicatedOutput.ReleaseFrame();
 					}
 					catch (SharpDXException e)
 					{
-						if (e.ResultCode.Code != SharpDX.DXGI.ResultCode.WaitTimeout.Result.Code)
+						if (e.ResultCode.Code != ResultCode.WaitTimeout.Result.Code)
 						{
 							Trace.TraceError(e.Message);
 							Trace.TraceError(e.StackTrace);
 						}
 					}
-				}
 			}
 		});
 		while (!_init) ;
 	}
 
 	#region Imaging Tools
-	public BitmapData CropBitmap(BitmapData origBmpData, int cropX, int cropY, int cropWidth, int cropHeight)
-	{
-		BitmapData rawOriginal = origBmpData;
-
-		int origByteCount = rawOriginal.Stride * rawOriginal.Height;
-		byte[] origBytes = new Byte[origByteCount];
-		Marshal.Copy(rawOriginal.Scan0, origBytes, 0, origByteCount);
-
-		//I want to crop a (cropWidth*cropHeight) section starting at cropX, cropY.
-		int startX = cropX;
-		int startY = cropY;
-		int width = cropWidth;
-		int height = cropHeight;
-		int BPP = 4;        //4 Bpp = 32 bits, 3 = 24, etc.
-
-		byte[] croppedBytes = new Byte[width * height * BPP];
-
-		//Iterate the selected area of the original image, and the full area of the new image
-		for (int i = 0; i < height; i++)
-		{
-			for (int j = 0; j < width * BPP; j += BPP)
-			{
-				int origIndex = (startX * rawOriginal.Stride) + (i * rawOriginal.Stride) + (startY * BPP) + (j);
-				int croppedIndex = (i * width * BPP) + (j);
-
-				//copy data: once for each channel
-				for (int k = 0; k < BPP; k++)
-				{
-					croppedBytes[croppedIndex + k] = origBytes[origIndex + k];
-				}
-			}
-		}
-
-		//copy new data into a bitmap
-		Bitmap croppedBitmap = new Bitmap(width, height);
-		BitmapData croppedData = croppedBitmap.LockBits(new Rectangle(0, 0, width, height), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
-		Marshal.Copy(croppedBytes, 0, croppedData.Scan0, croppedBytes.Length);
-
-		croppedBitmap.UnlockBits(croppedData);
-
-		return croppedData;
-	}
 	bool ColorsAreClose(Color a, Color z, int threshold = 50)
 	{
-		int r = (int)a.R - z.R,
-			g = (int)a.G - z.G,
-			b = (int)a.B - z.B;
+		int r = a.R - z.R,
+			g = a.G - z.G,
+			b = a.B - z.B;
 		return (r * r + g * g + b * b) <= threshold * threshold;
+	}
+
+	private bool IsWithinShadeRange(Color colorCurrent, Color colorComparing, int maxShadeBothDirections)
+	{
+		// colorCurrent is the color we use to calculate the possible allowed shades from
+		// colorComparing is the color we check if it is in the range of the shades calculated from colorCurrent
+
+		if (maxShadeBothDirections > 255) maxShadeBothDirections = 255;
+
+		var upperR = colorCurrent.R + maxShadeBothDirections;
+		var upperG = colorCurrent.G + maxShadeBothDirections;
+		var upperB = colorCurrent.B + maxShadeBothDirections;
+
+		if (upperR > 255) upperR = 255;
+		if (upperG > 255) upperG = 255;
+		if (upperB > 255) upperB = 255;
+
+		var lowerR = colorCurrent.R - maxShadeBothDirections;
+		var lowerG = colorCurrent.G - maxShadeBothDirections;
+		var lowerB = colorCurrent.B - maxShadeBothDirections;
+
+		if (lowerR < 0) lowerR = 0;
+		if (lowerG < 0) lowerG = 0;
+		if (lowerB < 0) lowerB = 0;
+
+		if (colorComparing.R >= lowerR && colorComparing.R <= upperR && colorComparing.G >= lowerG &&
+		    colorComparing.G <= upperG && colorComparing.B >= lowerB && colorComparing.B <= upperB) return true;
+
+		return false;
 	}
 	#endregion
 
 	#region PixelSearch Related Functions
+
 	public Point PixelSearch(BitmapData bmpData, int step = 1, int variance = 0, bool debugInfo = false)
 	{
 		if (bmpData != null)
 		{
-			int refX = x;
-			int refY = y;
-			if (step < 1) step = 1;
-
-			Stopwatch ts = new Stopwatch();
-			ts.Start();
-
-			unsafe
-			{
-				int bytesPerPixel = Image.GetPixelFormatSize(bmpData.PixelFormat) / 8;
-				int heightInPixels = bmpData.Height;
-				int widthInBytes = bmpData.Width * bytesPerPixel;
-				byte* ptrFirstPixel = (byte*)bmpData.Scan0;
-
-				for (int y = 0; y < heightInPixels; y++)
-				{
-					byte* currentLine = ptrFirstPixel + (y * bmpData.Stride);
-					for (int x = 0; x < widthInBytes; x = x + (bytesPerPixel * step))
-					{
-						int currentBlue = currentLine[x];
-						int currentGreen = currentLine[x + 1];
-						int currentRed = currentLine[x + 2];
-						int currentAlpha = currentLine[x + 3];
-
-						if (colorCustom.R == currentRed && colorCustom.G == currentGreen && colorCustom.B == currentBlue) // Not checking if matching alpha
-						{
-							double milliseconds = ((double)ts.ElapsedTicks / Stopwatch.Frequency) * 1000;
-
-							// Translate location of found pixel from bitmap data to screen location
-							// using our passed on reference locations (refX and refY)
-							//int translatedX = refX + (x / bytesPerPixel);
-							//int translatedY = refY + y;
-
-							int translatedX = (x / bytesPerPixel);
-							int translatedY = y;
-
-
-							// Print time taken, will be removed from the code when 
-							if (debugInfo) Debug.WriteLine("Time Taken: " + milliseconds + " ms");
-							return new Point(translatedX, translatedY);
-						}
-
-						if (variance > 0)
-						{
-							if (ColorsAreClose(Color.FromArgb(currentRed, currentGreen, currentBlue), colorCustom, variance))
-							{
-								int translatedX = (x / bytesPerPixel);
-								int translatedY = y;
-
-								// Print time taken, will be removed from the code when 
-								return new Point(translatedX, translatedY);
-							}
-						}
-					}
-				}
-			}
-
-			// Nothing Found
+			Debug.WriteLine("[WARN] 'bmpData' is null");
 			return new Point(-1, -1);
 		}
 
-		// 'bmpData' is null
+		if (step < 1) step = 1;
+
+		unsafe
+		{
+			var bytesPerPixel = Image.GetPixelFormatSize(bmpData.PixelFormat) / 8;
+			var heightInPixels = bmpData.Height;
+			var widthInBytes = bmpData.Width * bytesPerPixel;
+			var ptrFirstPixel = (byte*) bmpData.Scan0;
+
+			for (var y = 0; y < heightInPixels; y++)
+			{
+				var currentLine = ptrFirstPixel + y * bmpData.Stride;
+				for (var x = 0; x < widthInBytes; x = x + bytesPerPixel * step)
+				{
+					int currentBlue = currentLine[x];
+					int currentGreen = currentLine[x + 1];
+					int currentRed = currentLine[x + 2];
+					int currentAlpha = currentLine[x + 3];
+
+					if (colorCustom.R == currentRed && colorCustom.G == currentGreen && colorCustom.B == currentBlue
+					) // Not checking if matching alpha
+					{
+						var translatedX = x / bytesPerPixel;
+						var translatedY = y;
+
+						return new Point(translatedX, translatedY);
+					}
+
+					if (variance > 0)
+						if (ColorsAreClose(Color.FromArgb(currentRed, currentGreen, currentBlue), colorCustom, variance))
+						{
+							var translatedX = x / bytesPerPixel;
+							var translatedY = y;
+
+							return new Point(translatedX, translatedY);
+						}
+				}
+			}
+		}
+
+
+		// nothing found
 		return new Point(-1, -1);
 	}
 
-	public Point PixelSearchThreaded(BitmapData bmpData, int step = 1, int variance = 0, bool debugInfo = false, int threadCount = 8)
+	public Point PixelSearchThreaded(BitmapData bmpData, int step = 1, int variance = 0, bool debugInfo = false,
+		int threadCount = 8)
 	{
 		if (threadCount > Environment.ProcessorCount) threadCount = Environment.ProcessorCount;
-	
+		if (step < 1) step = 1;
+
 		// if a thread count thats either 0 or 1 is set, just set it to use the single threaded version
 		if (threadCount < 1 || threadCount == 1) return PixelSearch(bmpData);
 
-		if (bmpData != null)
+		if (bmpData == null)
 		{
-			unsafe
+			Debug.WriteLine("[WARN] 'bmpData' is null");
+			return new Point(-1, -1);
+		}
+
+		unsafe
+		{
+			var bytesPerPixel = Image.GetPixelFormatSize(bmpData.PixelFormat) / 8;
+			var heightInPixels = bmpData.Height;
+			var widthInBytes = bmpData.Width * bytesPerPixel;
+			var ptrFirstPixel = (byte*) bmpData.Scan0;
+
+			var options = new ParallelOptions();
+			options.MaxDegreeOfParallelism = threadCount;
+
+			var results = new ConcurrentBag<Point>();
+
+			Parallel.For(0, heightInPixels, options, (y, state) =>
 			{
-				int refX = x;
-				int refY = y;
+				if (results.Count > 0) state.Stop();
 
-				int bytesPerPixel = Image.GetPixelFormatSize(bmpData.PixelFormat) / 8;
-				int heightInPixels = bmpData.Height;
-				int widthInBytes = bmpData.Width * bytesPerPixel;
-				byte* ptrFirstPixel = (byte*) bmpData.Scan0;
+				var currentLine = ptrFirstPixel + y * bmpData.Stride;
 
-				var options = new ParallelOptions();
-				options.MaxDegreeOfParallelism = Environment.ProcessorCount;
-
-				ConcurrentBag<Point> results = new ConcurrentBag<Point>();
-
-				Parallel.For(0, heightInPixels, options, (y, state) => 
+				for (var x = 0; x < widthInBytes; x += bytesPerPixel * step)
 				{
 					if (results.Count > 0) state.Stop();
 
-					byte* currentLine = ptrFirstPixel + (y * bmpData.Stride);
+					int currentBlue = currentLine[x];
+					int currentGreen = currentLine[x + 1];
+					int currentRed = currentLine[x + 2];
+					int currentAlpha = currentLine[x + 3];
 
-					for (int x = 0; x < widthInBytes; x = x + (bytesPerPixel * step))
+					if (colorCustom.R == currentRed && colorCustom.G == currentGreen && colorCustom.B == currentBlue) // Not checking if matching alpha
 					{
-						if (results.Count > 0) state.Stop();
+						var translatedX = x / bytesPerPixel;
+						var translatedY = y;
 
-						int currentBlue = currentLine[x];
-						int currentGreen = currentLine[x + 1];
-						int currentRed = currentLine[x + 2];
-						int currentAlpha = currentLine[x + 3];
+						results.Add(new Point(translatedX, translatedY));
+						state.Stop();
+					}
 
-						if (colorCustom.R == currentRed && colorCustom.G == currentGreen && colorCustom.B == currentBlue) // Not checking if matching alpha
+					if (variance > 0)
+						if (IsWithinShadeRange(Color.FromArgb(currentRed, currentGreen, currentBlue), colorCustom, maxvariance))
 						{
-							int translatedX = (x / bytesPerPixel);
-							int translatedY = y;
+							var translatedX = x / bytesPerPixel;
+							var translatedY = y;
 
 							results.Add(new Point(translatedX, translatedY));
 							state.Stop();
 						}
-
-						if (variance > 0)
-						{
-							if (ColorsAreClose(Color.FromArgb(currentRed, currentGreen, currentBlue), colorCustom, variance))
-							{
-								int translatedX = (x / bytesPerPixel);
-								int translatedY = y;
-
-								// Print time taken, will be removed from the code when 
-								results.Add(new Point(translatedX, translatedY));
-								state.Stop();
-							}
-						}
-
-					}
-				});
-
-
-				if (results.Count > 0)
-				{
-					Point result;
-					if (results.TryPeek(out result))
-					{
-						return result;
-					}
 				}
+			});
+
+			if (results.Count > 0)
+			{
+				if (results.TryPeek(out Point result))
+					return result;
 			}
 		}
 
-		// 'bmpData' is null
+		// nothing found
 		return new Point(-1, -1);
 	}
 
@@ -391,49 +353,40 @@ public class PixelLibrary
 
 		if (bigArray.Length < 1) return new List<T[,]>();
 
-		List<T[,]> chunkContainer = new List<T[,]>();
-		int atCurrentHeight = 0;
-		int heightPerChunk = bigArray.GetLength(0) / chunkCount;
+		var chunkContainer = new List<T[,]>();
+		var atCurrentHeight = 0;
+		var heightPerChunk = bigArray.GetLength(0) / chunkCount;
 
-		for (int threadBlock = 0; threadBlock < chunkCount; threadBlock++)
-		{
+		for (var threadBlock = 0; threadBlock < chunkCount; threadBlock++)
 			if (threadBlock == chunkCount - 1) // we're at the last chunk
 			{
-				int remainingLines = (bigArray.GetLength(0) - atCurrentHeight);
+				var remainingLines = bigArray.GetLength(0) - atCurrentHeight;
 				Debug.WriteLine("At last chunk, we have " + remainingLines + " lines left to assign the last block!");
-				T[,] newThreadBlock = new T[remainingLines, bigArray.GetLength(1)];
+				var newThreadBlock = new T[remainingLines, bigArray.GetLength(1)];
 
-				for (int i = 0; i < remainingLines; i++)
-				{
-					for (int j = 0; j < bigArray.GetLength(1); j++)
-					{
-						newThreadBlock[i, j] = bigArray[atCurrentHeight + i, j];
-					}
-				}
+				for (var i = 0; i < remainingLines; i++)
+				for (var j = 0; j < bigArray.GetLength(1); j++)
+					newThreadBlock[i, j] = bigArray[atCurrentHeight + i, j];
 
 				atCurrentHeight += remainingLines;
 				chunkContainer.Add(newThreadBlock);
 			}
 			else
 			{
-				T[,] newThreadBlock = new T[heightPerChunk, bigArray.GetLength(1)];
+				var newThreadBlock = new T[heightPerChunk, bigArray.GetLength(1)];
 
-				for (int i = 0; i < heightPerChunk; i++)
-				{
-					for (int j = 0; j < bigArray.GetLength(1); j++)
-					{
-						newThreadBlock[i, j] = bigArray[atCurrentHeight + i, j];
-					}
-				}
+				for (var i = 0; i < heightPerChunk; i++)
+				for (var j = 0; j < bigArray.GetLength(1); j++)
+					newThreadBlock[i, j] = bigArray[atCurrentHeight + i, j];
 
 				atCurrentHeight += heightPerChunk;
 				chunkContainer.Add(newThreadBlock);
 			}
-		}
 
 		Debug.WriteLine("Blocks Available: " + chunkContainer.Count);
 		Debug.WriteLine("Height Itterated Through: " + atCurrentHeight);
-		Debug.WriteLine("Height Remaining: " + (bigArray.GetLength(0) - atCurrentHeight)); // if bigger than 0 something went wrong
+		Debug.WriteLine("Height Remaining: " +
+		                (bigArray.GetLength(0) - atCurrentHeight)); // if bigger than 0 something went wrong
 
 		return chunkContainer;
 	}
@@ -448,26 +401,21 @@ public class PixelLibrary
 	{
 		if (bigArray.Length < 1) return new List<Chunk>();
 
-		List<Chunk> chunkContainer = new List<Chunk>();
-		int atCurrentHeight = 0;
-		int heightPerChunk = bigArray.GetLength(0) / chunkCount;
+		var chunkContainer = new List<Chunk>();
+		var atCurrentHeight = 0;
+		var heightPerChunk = bigArray.GetLength(0) / chunkCount;
 
-		for (int threadBlock = 0; threadBlock < chunkCount; threadBlock++)
-		{
+		for (var threadBlock = 0; threadBlock < chunkCount; threadBlock++)
 			if (threadBlock == chunkCount - 1) // we're at the last chunk
 			{
-				Chunk newChunk = new Chunk();
-				int remainingLines = (bigArray.GetLength(0) - atCurrentHeight);
+				var newChunk = new Chunk();
+				var remainingLines = bigArray.GetLength(0) - atCurrentHeight;
 				Debug.WriteLine("At last chunk, we have " + remainingLines + " lines left to assign the last block!");
-				byte[,] newThreadBlock = new byte[remainingLines, bigArray.GetLength(1)];
+				var newThreadBlock = new byte[remainingLines, bigArray.GetLength(1)];
 
-				for (int i = 0; i < remainingLines; i++)
-				{
-					for (int j = 0; j < bigArray.GetLength(1); j++)
-					{
-						newThreadBlock[i, j] = bigArray[atCurrentHeight + i, j];
-					}
-				}
+				for (var i = 0; i < remainingLines; i++)
+				for (var j = 0; j < bigArray.GetLength(1); j++)
+					newThreadBlock[i, j] = bigArray[atCurrentHeight + i, j];
 
 				newChunk.Chunk2D = newThreadBlock;
 				newChunk.RefIndex = threadBlock;
@@ -477,23 +425,18 @@ public class PixelLibrary
 			}
 			else
 			{
-				byte[,] newThreadBlock = new byte[heightPerChunk, bigArray.GetLength(1)];
-				Chunk newChunk = new Chunk();
+				var newThreadBlock = new byte[heightPerChunk, bigArray.GetLength(1)];
+				var newChunk = new Chunk();
 
-				for (int i = 0; i < heightPerChunk; i++)
-				{
-					for (int j = 0; j < bigArray.GetLength(1); j++)
-					{
-						newThreadBlock[i, j] = bigArray[atCurrentHeight + i, j];
-					}
-				}
+				for (var i = 0; i < heightPerChunk; i++)
+				for (var j = 0; j < bigArray.GetLength(1); j++)
+					newThreadBlock[i, j] = bigArray[atCurrentHeight + i, j];
 
 				newChunk.Chunk2D = newThreadBlock;
 				newChunk.RefIndex = threadBlock;
 				atCurrentHeight += heightPerChunk;
 				chunkContainer.Add(newChunk);
 			}
-		}
 		return chunkContainer;
 	}
 
