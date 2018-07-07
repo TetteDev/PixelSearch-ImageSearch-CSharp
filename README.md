@@ -4,6 +4,9 @@ A pretty fast PixelSearch library to be used in C# projects.
 
 Current Features:
 * A pretty fast pixel searcher
+  * A "single" threaded pixelsearcher is available
+  * A multithreaded/pixel searcher using Parallelism is also available, limited to the amount of threads your cpu has.
+  
 * A decent image searcher (work in progress, credit to original creator of that snippet)
 
 Currently working on a threaded version of the pixel searcher.
